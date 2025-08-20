@@ -1,0 +1,45 @@
+# ── Terraform state & crash files ─────────────────────────
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/crash.log
+*.log
+
+# ── Terraform plan output ─────────────────────────────────
+terraform/*.tfplan
+
+# ── Sensitive variable files (rename if you use a different extension) ───
+terraform/*.tfvars.json
+terraform/*.tfvars
+
+# ── Terraform working directory ───────────────────────────
+terraform/.terraform
+
+# ── Provider overrides & generated files ──────────────────
+terraform/override.tf
+terraform/override.tf.json
+terraform/*_override.tf
+terraform/*_override.tf.json
+terraform/.terraform.lock.hcl
+
+# ── Editor artefacts ──────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+
+# ── K8s artefacts ──────────────────────────────────────
+.kube/
+
+# ── Additional Docs  ──────────────────────────────
+docs/
+tmp/
+
+# ── Secrets   ──────────────────────────────
+.env
+GCS_Privatekey.json
+
+# ── Common temporary files ────────────────────────────────
+*.tmp
+*.bak
+*.swp
+*.swo
+*~

@@ -1,0 +1,15 @@
+apiVersion: noobaa.io/v1alpha1
+kind: NamespaceStore
+metadata:
+  finalizers:
+  - noobaa.io/finalizer
+  name: akamai-ns
+  namespace: noobaa
+spec:
+  type: s3-compatible
+  s3Compatible:
+    endpoint: https://fr-par-1.linodeobjects.com
+    targetBucket: noobaa-test-a
+    secret:
+      name: akamai-s3-cred
+      namespace: noobaa

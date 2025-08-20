@@ -1,0 +1,14 @@
+apiVersion: noobaa.io/v1alpha1
+kind: NamespaceStore
+metadata:
+  finalizers:
+  - noobaa.io/finalizer
+  name: gcs-ns
+  namespace: noobaa
+spec:
+  type: google-cloud-storage
+  googleCloudStorage:
+    targetBucket: noobaa-test-b
+    secret:
+      name: gcp-gcs-cred
+      namespace: noobaa

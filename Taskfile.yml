@@ -1,0 +1,300 @@
+version: '3'
+
+dotenv: ['.env']
+
+tasks:
+  
+  # ===== PREREQUISITES: NooBaa Installation =====
+  
+  00-install-noobaa-cli:
+    desc: "Step 00: Install NooBaa CLI binary"
+    cmds:
+      - |
+        OS="darwin"
+        ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+        VERSION=$(curl -s https://api.github.com/repos/noobaa/noobaa-operator/releases/latest | jq -r '.name')
+        echo "Installing NooBaa CLI version $VERSION for $OS-$ARCH"
+        curl -LO https://github.com/noobaa/noobaa-operator/releases/download/$VERSION/noobaa-operator-$VERSION-$OS-$ARCH.tar.gz
+        tar -xvzf noobaa-operator-$VERSION-$OS-$ARCH.tar.gz
+        chmod +x noobaa-operator
+        sudo mv noobaa-operator /usr/local/bin/noobaa
+        rm -f noobaa-operator-$VERSION-$OS-$ARCH.tar.gz
+        echo "NooBaa CLI installed successfully"
+        noobaa version
+
+  01-deploy-noobaa:
+    desc: "Step 01: Deploy NooBaa system using CLI (recommended approach)"
+    preconditions:
+      - sh: "which noobaa"
+        msg: "NooBaa CLI not found. Run 'task 00-install-noobaa-cli' first."
+    cmds:
+      - |
+        kubectl create namespace noobaa || true
+        noobaa install -n noobaa \
+          --db-storage-class linode-block-storage \
+          --pv-pool-default-storage-class linode-block-storage
+
+  02-verify-noobaa-status:
+    desc: "Step 02: Check NooBaa system deployment status"
+    preconditions:
+      - sh: "kubectl get namespace noobaa 2>/dev/null"
+        msg: "NooBaa namespace not found. Run 'task 01-deploy-noobaa' first."
+    cmds:
+      - |
+        kubectl config set-context --current --namespace=noobaa
+        noobaa status
+
+  # ===== CLOUD CREDENTIALS SETUP =====
+
+  03-create-akamai-secret:
+    desc: "Step 03: Create secret for Akamai Object Storage access"
+    cmds:
+      - |
+        echo "Creating Akamai Object Storage secret..."
+        kubectl -n noobaa create secret generic akamai-s3-cred \
+          --from-literal=AWS_ACCESS_KEY_ID="${S3_LINODE_ACCESSKEY}" \
+          --from-literal=AWS_SECRET_ACCESS_KEY="${S3_LINODE_SECRETKEY}" \
+          --dry-run=client -o yaml | kubectl apply -f -
+        echo "Akamai secret created successfully"
+
+  04-create-google-secret:
+    desc: "Step 04: Create secret for Google Cloud Storage access"
+    cmds:
+      - |
+        echo "Creating Google Cloud Storage secret..."
+        kubectl -n "${NB_NAMESPACE}" create secret generic "${GCS_SECRET_NAME}" \
+          --from-file=GoogleServiceAccountPrivateKeyJson="${GOOGLE_PRIVATEKEY}" \
+          --dry-run=client -o yaml | kubectl apply -f -
+        echo "Google Cloud secret created successfully"
+
+  # ===== NAMESPACE STORES CONFIGURATION =====
+
+  05-create-akamai-namespacestore:
+    desc: "Step 05: Create Akamai NamespaceStore connecting to object storage bucket"
+    preconditions:
+      - sh: "kubectl get secret akamai-s3-cred -n noobaa 2>/dev/null"
+        msg: "Akamai secret not found. Run 'task 03-create-akamai-secret' first."
+    cmds:
+      - kubectl apply -f akamai-namespacestore.yaml
+
+  06-create-google-namespacestore:
+    desc: "Step 06: Create Google Cloud NamespaceStore connecting to GCS bucket"
+    preconditions:
+      - sh: "kubectl get secret gcp-gcs-cred -n noobaa 2>/dev/null"
+        msg: "Google Cloud secret not found. Run 'task 04-create-google-secret' first."
+    cmds:
+      - kubectl apply -f google-namespacestore.yaml
+
+  # ===== BUCKET CLASSES CREATION =====
+
+  07-create-bucketclasses:
+    desc: "Step 07: Create BucketClasses for single-cloud storage access"
+    preconditions:
+      - sh: "kubectl get namespacestore akamai-ns -n noobaa 2>/dev/null"
+        msg: "Akamai NamespaceStore not found. Run 'task 05-create-akamai-namespacestore' first."
+      - sh: "kubectl get namespacestore gcs-ns -n noobaa 2>/dev/null"
+        msg: "Google NamespaceStore not found. Run 'task 06-create-google-namespacestore' first."
+    cmds:
+      - |
+        echo "Creating single-cloud BucketClasses..."
+        noobaa -n noobaa bucketclass create namespace-bucketclass single akamai-bc --resource akamai-ns
+        noobaa -n noobaa bucketclass create namespace-bucketclass single gcs-bc --resource gcs-ns
+        echo "BucketClasses created successfully"
+
+  # ===== OBJECT BUCKET CLAIMS =====
+
+  08-create-single-cloud-obcs:
+    desc: "Step 08: Create Object Bucket Claims for individual cloud testing"
+    cmds:
+      - |
+        echo "Creating individual Object Bucket Claims..."
+        kubectl create namespace my-app || true
+        noobaa obc create my-akamai-claim -n noobaa --app-namespace my-app --bucketclass akamai-bc 
+        noobaa obc create my-google-claim -n noobaa --app-namespace my-app --bucketclass gcs-bc
+        echo "Single-cloud OBCs created successfully"
+
+  09-display-bucket-names:
+    desc: "Step 09: Display auto-generated bucket names for verification"
+    preconditions:
+      - sh: "kubectl get namespace my-app 2>/dev/null"
+        msg: "my-app namespace not found. Run 'task 08-create-single-cloud-obcs' first."
+    cmds:
+      - |
+        echo "Akamai Bucket: $(kubectl -n my-app get configmap my-akamai-claim -o jsonpath='{.data.BUCKET_NAME}')"
+        echo "Google Bucket: $(kubectl -n my-app get configmap my-google-claim -o jsonpath='{.data.BUCKET_NAME}')"
+
+  # ===== MULTI-CLOUD REPLICATION SETUP =====
+
+  10-generate-replication-rules:
+    desc: "Step 10: Generate replication rules JSON from bucket claims"
+    preconditions:
+      - sh: "kubectl get configmap my-akamai-claim -n my-app 2>/dev/null && kubectl get configmap my-google-claim -n my-app 2>/dev/null"
+        msg: "OBC configmaps not found. Run 'task 09-display-bucket-names' first."
+    vars:
+      OUTPUT: replication-rules.json
+    cmds:
+      - |
+        set -euo pipefail
+        echo "Generating replication rules..."
+        GOOGLE_BUCKET="$(kubectl -n my-app get configmap my-google-claim -o jsonpath='{.data.BUCKET_NAME}')"
+        AKAMAI_BUCKET="$(kubectl -n my-app get configmap my-akamai-claim -o jsonpath='{.data.BUCKET_NAME}')"
+        
+        if command -v jq >/dev/null 2>&1; then
+          jq -n --arg g "$GOOGLE_BUCKET" --arg a "$AKAMAI_BUCKET" \
+            '{rules: [
+              {rule_id: "rule-dual-google", destination_bucket: $g},
+              {rule_id: "rule-dual-akamai", destination_bucket: $a}
+            ]}' > "{{.OUTPUT}}"
+        else
+          cat > "{{.OUTPUT}}" <<JSON
+        {
+          "rules": [
+            {
+              "rule_id": "rule-dual-google",
+              "destination_bucket": "${GOOGLE_BUCKET}"
+            },
+            {
+              "rule_id": "rule-dual-akamai", 
+              "destination_bucket": "${AKAMAI_BUCKET}"
+            }
+          ]
+        }
+        JSON
+        fi
+        echo "Replication rules generated: {{.OUTPUT}}"
+
+  11-create-dual-obc:
+    desc: "Step 11: Create dual-cloud Object Bucket Claim with replication"
+    preconditions:
+      - sh: "test -f replication-rules.json"
+        msg: "replication-rules.json not found. Run 'task 10-generate-replication-rules' first."
+    cmds:
+      - |
+        echo "Creating dual-cloud OBC with replication..."
+        noobaa obc create my-dual-claim -n noobaa --app-namespace my-app --replication-policy replication-rules.json
+        echo "Dual-cloud OBC created successfully"
+
+  # ===== TESTING AND UTILITIES (Independent Tasks) =====
+
+  12-start-port-forward:
+    desc: "Step 12: Start port forwarding for S3 API testing (run in separate terminal)"
+    cmds:
+      - |
+        echo "Starting port forward to NooBaa S3 service..."
+        echo "This will forward local port 6443 to NooBaa S3 API"
+        echo "Keep this running in a separate terminal for testing"
+        kubectl -n noobaa port-forward svc/s3 6443:443
+
+  13-extract-noobaa-credentials:
+    desc: "Step 13: Extract NooBaa credentials and append to .env file"
+    vars:
+      NAMESPACE: my-app 
+      OBC: my-dual-claim  
+      ENV_FILE: .env
+      FORCE_ENDPOINT: https://127.0.0.1:6443
+    cmds:
+      - |
+        set -euo pipefail
+        NS="{{.NAMESPACE}}"
+        OBC="{{.OBC}}"
+        ENV="{{.ENV_FILE}}"
+        FORCE_ENDPOINT="{{.FORCE_ENDPOINT}}"
+
+        mkdir -p "$(dirname "$ENV")"
+        touch "$ENV"
+
+        echo "Waiting for OBC credentials to be ready..."
+        for i in {1..60}; do
+          kubectl -n "$NS" get cm "$OBC" >/dev/null 2>&1 && \
+          kubectl -n "$NS" get secret "$OBC" >/dev/null 2>&1 && break
+          sleep 1
+        done
+
+        # Extract credentials
+        HOST=$(kubectl -n "$NS" get cm "$OBC" -o jsonpath='{.data.BUCKET_HOST}')
+        PORT=$(kubectl -n "$NS" get cm "$OBC" -o jsonpath='{.data.BUCKET_PORT}')
+        BUCKET=$(kubectl -n "$NS" get cm "$OBC" -o jsonpath='{.data.BUCKET_NAME}')
+        AKI=$(kubectl -n "$NS" get secret "$OBC" -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
+        SAK=$(kubectl -n "$NS" get secret "$OBC" -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
+
+        # Set endpoint
+        if [ -n "$FORCE_ENDPOINT" ]; then
+          S3_ENDPOINT="$FORCE_ENDPOINT"
+        else
+          S3_ENDPOINT="https://${HOST}:${PORT}"
+        fi
+
+        {
+          echo ""
+          echo "# NooBaa S3 Credentials (generated by Task 13-extract-noobaa-credentials)"
+          echo "S3_ENDPOINT: ${S3_ENDPOINT}"
+          echo "BUCKET: ${BUCKET}"
+          echo "AWS_ACCESS_KEY_ID: ${AKI}"
+          echo "AWS_SECRET_ACCESS_KEY: ${SAK}"
+        } >> "$ENV"
+
+        echo "NooBaa credentials appended to $ENV"
+        echo "Endpoint: $S3_ENDPOINT"
+        echo "Bucket: $BUCKET"
+
+  14-test-s3-list:
+    desc: "Step 14: Test S3 API listing via NooBaa (workaround for delimiter bug)"
+    dotenv: [".env"]
+    cmds:
+      - |
+        echo "Testing S3 listing via NooBaa..."
+        HOST=$(echo "$S3_ENDPOINT" | sed 's#^https\?://##')
+        s3cmd \
+          --access_key="$AWS_ACCESS_KEY_ID" \
+          --secret_key="$AWS_SECRET_ACCESS_KEY" \
+          --host="$HOST" \
+          --host-bucket="" \
+          --ssl \
+          --no-check-certificate \
+          ls --recursive "s3://$BUCKET/"
+
+  15-test-s3-upload:
+    desc: "Step 15: Test object upload to NooBaa with dual replication"
+    dotenv: [".env"]
+    cmds:
+      - |
+        echo "Testing object upload with replication..."
+        echo -n "NooBaa test object" > /tmp/noobaa-test.txt
+        TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+        AWS_EC2_METADATA_DISABLED=true \
+        AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
+        AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
+        aws --endpoint-url "$S3_ENDPOINT" --no-verify-ssl \
+          s3api put-object --bucket "$BUCKET" \
+          --key "dual/test-${TIMESTAMP}.txt" \
+          --body /tmp/noobaa-test.txt
+        echo "Object uploaded successfully"
+        echo "Check both Akamai and Google Cloud consoles to verify replication"
+
+  # ===== CONVENIENCE TASKS =====
+
+  full-deployment:
+    desc: "Run complete NooBaa deployment sequence (steps 00-11)"
+    cmds:
+      - task: 00-install-noobaa-cli
+      - task: 01-deploy-noobaa
+      - task: 02-verify-noobaa-status
+      - task: 03-create-akamai-secret
+      - task: 04-create-google-secret
+      - task: 05-create-akamai-namespacestore
+      - task: 06-create-google-namespacestore
+      - task: 07-create-bucketclasses
+      - task: 08-create-single-cloud-obcs
+      - task: 09-display-bucket-names
+      - task: 10-generate-replication-rules
+      - task: 11-create-dual-obc
+
+  cleanup:
+    desc: "Clean up NooBaa deployment and resources"
+    cmds:
+      - |
+        echo "Cleaning up NooBaa resources..."
+        kubectl delete namespace my-app --ignore-not-found=true
+        noobaa uninstall -n noobaa || true
+        kubectl delete namespace noobaa --ignore-not-found=true
+        echo "Cleanup completed"

@@ -1,0 +1,9 @@
+# VLAN Project Configuration
+linode_token = [REPLACE WITH TOKEN]
+admin_ip = "1.2.3.4/32" #Replace with your IP
+
+# Region
+region = "fr-par" #Replace with your region
+
+# GCP Project ID
+gcp_projectid = [REPLACE WITH GCP PROJECTID]
