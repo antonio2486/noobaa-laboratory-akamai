@@ -28,7 +28,7 @@ In this lab is tested the replication of all data (no filtering logics are set) 
 
 1. **Unified Storage Interface**: Creation of one unique S3 interface abstracting multiple object storages, facilitating application development by eliminating the need to manage different cloud provider APIs
 
-2. **Disaster Recovery and High Availability**: Increase availability for disaster recovery purposes by allocating data to different providers using one unique endpoint, ensuring business continuity even if one cloud provider experiences outages
+2. **Disaster Recovery and Multi-Region Availability**: Increase availability for disaster recovery purposes by allocating data either to multiple buckets from the same cloud provider or to buckets hosted in  different cloud providers, always using one unique endpoint, ensuring business continuity even if one cloud provider experiences outages
 
 3. **Geographic Distribution and Latency Optimization**: A unique S3 interface through which data is automatically distributed to different regions, reducing latency for geo-dispersed applications and improving user experience globally
 
