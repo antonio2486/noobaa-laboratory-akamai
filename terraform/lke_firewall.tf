@@ -87,7 +87,7 @@ resource "linode_firewall" "noobaa_lke_firewall" {
 
 
   # Apply to LKE cluster nodes
-  //linodes = linode_lke_cluster.noobaa_lke.pool[0].nodes[*].instance_id
+  linodes = linode_lke_cluster.noobaa_lke.pool[0].nodes[*].instance_id
 
   depends_on = [linode_lke_cluster.noobaa_lke]
 }
