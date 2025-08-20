@@ -18,6 +18,20 @@ For this lab I've selected Akamai Cloud and Google Cloud as Cloud Providers, but
 
 As it is further detailed below, this lab tries to replicate on a smaller and simplified scale the complex multi-cloud strategy architecture implemented by many organizations to show how open-source software can provide an abstraction layer to fully automate data replication on different platforms.
 
+### Business Applications and Use Cases
+
+This solution provides a fixed "immutable" S3-compliant storage interface which is backed by one or more actual object storage services to which all the data is replicated, regardless of where they are hosted in one or several cloud providers.
+
+In this lab is tested the replication of all data (no filtering logics are set) to two different object storages so that the data gets redundant increasing the availability or reducing latency as the storage may be placed in different regions (in this case France for Akamai and Italy for GCP). Based on the observation of this test, NooBaa implements an asynchronous replication which runs every 20-30 minutes so that the consistency is eventually ensured also in case of a temporary fault of one of the object storages.
+
+**Key Use Cases:**
+
+1. **Unified Storage Interface**: Creation of one unique S3 interface abstracting multiple object storages, facilitating application development by eliminating the need to manage different cloud provider APIs
+
+2. **Disaster Recovery and High Availability**: Increase availability for disaster recovery purposes by allocating data to different providers using one unique endpoint, ensuring business continuity even if one cloud provider experiences outages
+
+3. **Geographic Distribution and Latency Optimization**: A unique S3 interface through which data is automatically distributed to different regions, reducing latency for geo-dispersed applications and improving user experience globally
+
 ![NooBaa Lab Architecture](diagram-noobaa-lab.jpg)
 
 ## Architecture
