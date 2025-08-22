@@ -1,4 +1,4 @@
-# NooBaa Multi-Cloud Storage Laboratory with Akamai Cloud and GCP
+# A Cross-Cloud Storage Replication Solution with NooBaa on Akamai Cloud and Google
 
 ## Index
 
